@@ -1,0 +1,25 @@
+---
+title: "axelar_evm_users"
+author: "Charliemarketplace"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Intro
+
+# Data 
+
+# Unique Users by source chain 
+
+# User Level Network
+
+# Source-Destination Network
+
+# Power User on-chain histories
+
+# User Churn
+
+# EVM Market Fit / Opportunities
+
+
+
