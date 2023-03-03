@@ -37,3 +37,15 @@ colnames(eoatbl) <- c("address","sourcechain","destinationchain", "amount")
 srcdest <- as.data.frame(table(evm$sourcechain, evm$destinationchain)) %>% 
   filter(Freq > 0)
 colnames(srcdest) <- c("sourcechain","destinationchain", "amount")
+
+evm$BLOCK_TIMESTAMP <- as.POSIXct(as.numeric(evm$TIMESTAMP_SECONDS), 
+                                  origin = "1970-01-01",
+                                  tz = 'utc')
+
+evm$RAW_AMOUNT <- as.numeric(evm$RAW_AMOUNT)
+
+evm <- evm %>% 
+  select(sourcechain, BLOCK_TIMESTAMP, TX_HASH, EOA, TOKEN_ADDRESS, TOKEN_SYMBOL,
+         RAW_AMOUNT, destinationchain)
+
+colnames(evm) <- tolower(colnames(evm))
