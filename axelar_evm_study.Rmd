@@ -1,19 +1,228 @@
 ---
-title: "axelar_evm_users"
+title: "Axelar EVM Growth"
 author: "Charliemarketplace"
 date: "`r Sys.Date()`"
-output: html_document
+output:
+  html_document:
+    css: "styles.css"
+    includes:
+      in_header: header.html
+    code_folding: hide
+    toc: true
+    toc_float: true
+editor_options: 
+  chunk_output_type: console
 ---
+
+```{r, warning=FALSE, message=FALSE}
+library(shroomDK)
+library(reactable)
+library(plotly)
+library(visNetwork)
+library(dplyr)
+
+source("0_data_formatting.R")
+
+```
 
 # Intro
 
+Axelar is a cross-chain transfer and messaging protocol and a leader in EVM <-> Cosmos 
+transfers of tokens like USDC. Here, we focus on transfers via General Message Passing (GMP), 
+most specifically the *Squid* Router.
+
+Transaction originating from Ethereum Virtual Machine (EVM) blockchains that use the chain's 
+local Squid Router address `0xce16f69375520ab01377ce7b88f5ba8c48f8d666` on each of:
+Arbitrum, Avalanche, Binance Smart Chain, Ethereum Mainnet, and Polygon to send messages (most often USDC or axlUSDC) to other chains including each other but also Osmosis, Fantom, Moonbeam, etc. 
+
 # Data 
+
+On each `source chain` of: Arbitrum, Avalanche, Binance Smart Chain, Ethereum Mainnet, and Polygon  
+a transaction is originated by an Externally Owned Account (EOA), i.e., a person (or possibly a bot). 
+
+This `Origin From Address` is considered the unique, cross-EVM person address. 
+
+Transactions from these EOA to the Squid Router where the Squid Router then *burns* 
+the tokens (address: 0x00000...0000) are considered relevant GMP squid transfers. 
+This is because axltokens on non-ETH chains are backed by tokens on ETH mainnet's Axelar Gateway. 
+So these tokens can be burned and minted across non-ETH chains.
+
+For Ethereum mainnet, instead of the burn address, Squid -> Gateway (`0x4f4495243837681061c4743b74b3eedf548d56a5`) 
+is used.
+
+```
+with squid_to_burn AS (
+SELECT 
+BLOCK_NUMBER, BLOCK_TIMESTAMP, TX_HASH,
+ORIGIN_FROM_ADDRESS as EOA, 
+CONTRACT_ADDRESS as token_address,
+event_inputs:value as raw_amount
+ FROM 
+ -- swap out each chain's event logs 
+bsc.core.fact_event_logs
+WHERE 
+EVENT_NAME = 'Transfer' 
+-- Squid Router burns token
+AND EVENT_INPUTS:from = '0xce16f69375520ab01377ce7b88f5ba8c48f8d666'
+AND EVENT_INPUTS:to = '0x0000000000000000000000000000000000000000'
+),
+```
+
+Combining relevant data for each chain results in the `evm` table here where
+raw amount is not decimal adjusted (e.g., USDC has 6 decimals).
+
+```{r}
+reactable(
+  head(evm)
+)
+```
 
 # Unique Users by source chain 
 
-# User Level Network
+Ethereum, with the highest transaction fees, has the largest avg # of USDC 
+sent in its transactions and the most $ total with the 2nd fewest transactions.
+
+```{r}
+reactable(
+  evm %>% group_by(sourcechain) %>% summarise(
+    '# Unique Users' = length(unique(eoa)),
+    '# Squid Tx' = length(unique(tx_hash)),
+    'Avg Tx / User' = round(length(unique(tx_hash))/length(unique(eoa)),2),
+    'Total $USDC Sent' = format(round(sum(raw_amount/1e6),0),big.mark = ","),
+    'Avg $ Sent' = round(sum(raw_amount/1e6)/length(unique(tx_hash)),2)
+  )
+)
+```
+
+# User Level Visuals 
+
+```{r}
+eoatx <- eoatbl %>% group_by(address) %>% 
+  summarize(ntx = sum(amount),
+            nsrc = length(unique(sourcechain)),
+            ndest = length(unique(destinationchain))
+              )
+
+cdf_tx <- ecdf(eoatx$ntx)(seq(from = 0, to = max(eoatx$ntx), by = 1))
+plot_ly(data = data.frame(), y = ~cdf_tx, type = 'scatter', mode = 'lines+markers') %>% 
+  layout(xaxis = list(title = "Number of Transactions by User"),
+         yaxis = list(title = "Cumulative % of EOAs"),
+         title = list(
+           text = "~96% of EVM GMP Users have 5 or less transactions", 
+           y = 0.95)
+  )
+
+
+cdf_dest <- ecdf(eoatx$ndest)(seq(from = 0, to = max(eoatx$ndest), by = 1))
+plot_ly(data = data.frame(), y = ~cdf_dest, type = 'scatter', mode = 'lines+markers') %>% 
+  layout(xaxis = list(title = "# Destination Chains by User"),
+         yaxis = list(title = "Cumulative % of EOAs"),
+         title = list(
+           text = "~95% of EVM GMP Users bridge to 2 or fewer chains", 
+           y = 0.95)
+  )
+
+```
+
+## User Level Network
+
+```{r}
+# alphabetical order
+src_chains <- sort(unique(evm$sourcechain))
+dest_chains <- sort(unique(evm$destinationchain))
+
+nodes <- data.frame(
+  label = c(src_chains, dest_chains)
+)
+
+nodes$id <- 1:nrow(nodes)
+nodes$group <- c(rep("source", length(src_chains)), rep("dest", length(dest_chains)))
+nodes$shape <- c(rep("square", length(src_chains)), rep("circle", length(dest_chains)))
+nodes$color <- c(rep("#fcdd42", length(src_chains)), rep("#e9e9f5", length(dest_chains)))
+nodes$title <- paste0("<b>", nodes$label, "</b>")
+  
+nodes$y <- c(rep(-200, length(src_chains)), rep(200, length(dest_chains)))
+nodes$x <- c(100*(length(src_chains):1) + 800, 100*(1:length(dest_chains)))
+
+edges <- eoatbl
+
+edges <- merge(
+  edges, nodes[nodes$group == "source", c("id","label")], 
+  by.x = "sourcechain", by.y = "label", all.x = TRUE
+)
+
+edges$from <- edges$id 
+edges$id <- NULL
+edges <- merge(
+  edges, nodes[nodes$group == "dest", c("id","label")], 
+  by.x = "destinationchain", by.y = "label", all.x = TRUE 
+)
+edges$to <- edges$id
+edges$id <- NULL
+
+edges$width <- floor(edges$amount/10)
+edges$title <- paste0("EOA: ", edges$address,"<br>#GMP: ", edges$amount)
+
+visNetwork(nodes, edges, 
+           main = "5 EVM Source to all available Destinations",
+           submain = "1 Line = 1 User; Width ~ # GMP by User") %>% 
+    visOptions(highlightNearest = TRUE, nodesIdSelection = TRUE) %>% 
+  visNodes(fixed = TRUE)
+  
+```
+
+## Repeat-User Level Network 
+
+Excluding those who have only done 1 transfer *ever*.
+
+```{r}
+visNetwork(nodes, (edges[edges$address %in% eoatx$address[eoatx$ntx > 1], ]),
+            main = "Transfers among repeat GMP Users",
+           submain = "1 Line = 1 User. Excludes EOAs with only 1 transfer ever") %>% 
+    visOptions(highlightNearest = TRUE, nodesIdSelection = TRUE) %>% 
+  visNodes(fixed = TRUE)
+
+```
 
 # Source-Destination Network
+
+Aggregating up to 1 line per network-pair.
+
+```{r}
+
+edges <- srcdest
+
+edges <- merge(
+  edges, nodes[nodes$group == "source", c("id","label")], 
+  by.x = "sourcechain", by.y = "label", all.x = TRUE
+)
+
+edges$from <- edges$id 
+edges$id <- NULL
+edges <- merge(
+  edges, nodes[nodes$group == "dest", c("id","label")], 
+  by.x = "destinationchain", by.y = "label", all.x = TRUE 
+)
+edges$to <- edges$id
+edges$id <- NULL
+
+edges$width <- floor(log(edges$amount))
+edges$title <- paste0("SRC: ", edges$sourcechain, 
+                      "<br>Dest: ", edges$destinationchain,
+                      "<br># GMP: ", edges$amount)
+
+
+visNetwork(nodes, edges, 
+           main = "5 EVM Source to all available Destinations",
+           submain = "1 Line = 1 Pair; Width ~ Log(#Transfers)") %>% 
+    visOptions(highlightNearest = TRUE, nodesIdSelection = TRUE) %>% 
+  visNodes(fixed = TRUE)
+```
+
+```{r}
+
+
+```
 
 # Power User on-chain histories
 
