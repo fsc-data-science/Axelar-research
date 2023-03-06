@@ -6,8 +6,8 @@ body {
   background-color: #10151A;
     background-position: center top;
   background-size: 300px 117px;
-  padding-left: 10%;
-  padding-right: 10%;
+  padding-left: 5%;
+  padding-right: 5%;
   color: #C4CDD5;
     font-size: 18px;
   font-weight: 400;
@@ -20,6 +20,10 @@ hr {
   color: #C4CDD5;
 }
 
+.visNetwork {
+  color: black;
+  
+}
 .tocify {
   background-color: #10151A;
     font-size: 14px;  
@@ -55,7 +59,7 @@ h3 {
 }
 
 .plotly {
-  margin: 30px;
+  margin: 20px;
 }
 
 .rt-page-button-current  {
