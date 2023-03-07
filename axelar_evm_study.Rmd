@@ -71,7 +71,7 @@ AND EVENT_INPUTS:to = '0x0000000000000000000000000000000000000000'
 Combining relevant data for each chain results in the `evm` table here where
 raw amount is not decimal adjusted (e.g., USDC has 6 decimals).
 
-```{r}
+```{r, warning = FALSE, message = FALSE}
 reactable(
   head(evm)
 )
@@ -82,7 +82,7 @@ reactable(
 Ethereum, with the highest transaction fees, has the largest avg # of USDC 
 sent in its transactions and the most $ total with the 2nd fewest transactions.
 
-```{r}
+```{r, warning = FALSE, message = FALSE}
 reactable(
   evm %>% group_by(sourcechain) %>% summarise(
     '# Unique Users' = length(unique(eoa)),
@@ -96,7 +96,7 @@ reactable(
 
 # User Level Visuals 
 
-```{r}
+```{r, warning = FALSE, message = FALSE}
 eoatx <- eoatbl %>% group_by(address) %>% 
   summarize(ntx = sum(amount),
             nsrc = length(unique(sourcechain)),
@@ -126,7 +126,7 @@ plot_ly(data = data.frame(), y = ~cdf_dest, type = 'scatter', mode = 'lines+mark
 
 ## User Level Network
 
-```{r}
+```{r, warning = FALSE, message = FALSE}
 # alphabetical order
 src_chains <- sort(unique(evm$sourcechain))
 dest_chains <- sort(unique(evm$destinationchain))
@@ -163,7 +163,7 @@ edges$id <- NULL
 edges$width <- floor(edges$amount/10)
 edges$title <- paste0("EOA: ", edges$address,"<br>#GMP: ", edges$amount)
 
-visNetwork(nodes, edges, 
+visNetwork(nodes, edges, background = "#FFFFFF",
            main = "5 EVM Source to all available Destinations",
            submain = "1 Line = 1 User; Width ~ # GMP by User") %>% 
     visOptions(highlightNearest = TRUE, nodesIdSelection = TRUE) %>% 
@@ -171,12 +171,14 @@ visNetwork(nodes, edges,
   
 ```
 
+
 ## Repeat-User Level Network 
 
 Excluding those who have only done 1 transfer *ever*.
 
-```{r}
+```{r, warning = FALSE, message = FALSE}
 visNetwork(nodes, (edges[edges$address %in% eoatx$address[eoatx$ntx > 1], ]),
+           background = "#FFFFFF",
             main = "Transfers among repeat GMP Users",
            submain = "1 Line = 1 User. Excludes EOAs with only 1 transfer ever") %>% 
     visOptions(highlightNearest = TRUE, nodesIdSelection = TRUE) %>% 
@@ -184,11 +186,12 @@ visNetwork(nodes, (edges[edges$address %in% eoatx$address[eoatx$ntx > 1], ]),
 
 ```
 
+
 # Source-Destination Network
 
 Aggregating up to 1 line per network-pair.
 
-```{r}
+```{r, warning = FALSE, message = FALSE}
 
 edges <- srcdest
 
@@ -213,22 +216,345 @@ edges$title <- paste0("SRC: ", edges$sourcechain,
 
 
 visNetwork(nodes, edges, 
+           background = "#FFFFFF",
            main = "5 EVM Source to all available Destinations",
            submain = "1 Line = 1 Pair; Width ~ Log(#Transfers)") %>% 
     visOptions(highlightNearest = TRUE, nodesIdSelection = TRUE) %>% 
   visNodes(fixed = TRUE)
 ```
 
-```{r}
 
+```{r, warning = FALSE, message = FALSE}
+visNetwork(nodes, edges, 
+           background = "#FFFFFF",
+           main = "5 EVM Source to all available Destinations",
+           submain = "1 Line = 1 Pair; Width ~ Log(#Transfers)") %>% 
+    visOptions(highlightNearest = TRUE, nodesIdSelection = TRUE) %>% 
+  visNodes(fixed = TRUE)
+
+```
+
+# Power Users
+
+Looking at the subset of users that have done at least 5 GMP transfers originating on 
+any of the 5 EVM chains of study. 
+
+```{r, warning = FALSE, message = FALSE}
+power_users <- eoatx[eoatx$ntx >= 5, ]
+pucdf_tx <- ecdf(power_users$ntx)(sort(unique(power_users$ntx)))
+
+plot_ly(data = data.frame(), x = sort(unique(power_users$ntx)), 
+        y = ~pucdf_tx, type = 'scatter', mode = 'lines+markers') %>% 
+  layout(xaxis = list(title = "Number of Transactions by User"),
+         yaxis = list(title = "Cumulative % of EOAs"),
+         title = list(
+           text = "5 Addresses have used GMP >100 times \n 49 have used 6-99 times", 
+           y = 0.95)
+  )
+
+```
+
+# Power User Churn
+
+```{r, warning = FALSE, message = FALSE}
+evm_power <- evm[evm$eoa %in% power_users$address, ]
+```
+
+These `r length(unique(power_users$address))` most active addresses have done `r nrow(evm_power)` 
+transactions ( `r round(nrow(evm_power)/nrow(evm)*100, 1)`% of the GMP transactions originating 
+on the 5 main chains).
+
+```{r, warning = FALSE, message = FALSE}
+
+pu_summary <- evm_power %>% group_by(eoa) %>% 
+  summarise(
+    first_tx = min(block_timestamp),
+    last_tx = max(block_timestamp),
+    days_active = as.numeric(ceiling(difftime(max(block_timestamp), min(block_timestamp), units = "days"))),
+    days_since = as.numeric(ceiling(difftime(as.Date("2023-03-01"), max(block_timestamp), units = "days"))),
+    ntx = length(unique(tx_hash))
+  ) %>% 
+  mutate(tx_per_activeday = as.numeric(ntx)/as.numeric(days_active))
+
+```
+
+The earliest gmp transaction among power users was `r min(pu_summary$first_tx)` while 
+the most recent in the data cutoff is `r max(pu_summary$last_tx)`. 
+
+Looking at each users first GMP tx (any source chain) and last GMP tx (any source chain) 
+identifies that of the users that have done at least 5 GMP transactions, they were Axelar users
+for `r median(pu_summary$days_active)` days on median, and typically last used it `r median(pu_summary$days_since)` days ago.
+
+```{r, warning = FALSE, message = FALSE}
+plot_ly(pu_summary, x = ~days_active, type = "histogram", 
+             xbins = list(size = 1)) %>% 
+  layout(
+  xaxis = list(title = "Days Active", showticklabels = TRUE),
+  yaxis = list(title = "# of EOAs", showticklabels = TRUE),
+  bargap = 0.2,
+  title = list(text = "Median Power User is active 9 Days", y = 0.975)
+)
+
+plot_ly(pu_summary, x = ~days_since, type = "histogram", 
+             xbins = list(size = 1)) %>% 
+  layout(
+  xaxis = list(title = "Days Since Last Tx", showticklabels = TRUE),
+  yaxis = list(title = "# of EOAs", showticklabels = TRUE),
+  bargap = 0.2,
+  title = list(text = "Median Power User last active 10 days ago\n (Ref Date: 2023-03-01)", y = 0.975)
+)
+
+plot_ly(pu_summary, x = ~tx_per_activeday, type = "histogram", 
+             xbins = list(size = 0.1)) %>% 
+  layout(
+  xaxis = list(title = "TX Per Active Day", showticklabels = TRUE),
+  yaxis = list(title = "# of EOAs", showticklabels = TRUE),
+  bargap = 0.2,
+  title = list(text = "Median Power User did 1 TX per Active Day", y = 0.975)
+)
+
+```
+
+Two key groups become apparent among power GMP users: 
+
+- Persistent Early users who have a large # of transactions and have done transactions both in 2022 
+and in February 2023.
+
+- New active users that have started in 2023 and were active in the Feb 20th 2023 - March 1, 2023 time period.
+
+```{r, warning = FALSE, message = FALSE}
+
+plot_ly() %>% 
+  add_trace(data = pu_summary, 
+        x = ~first_tx, 
+        y = ~last_tx,
+        size = ~ntx, 
+        type = "scatter", mode = "markers",
+        name = "Short-term users") %>%
+  add_trace(data = pu_summary %>% filter(first_tx < '2023-01-01' & last_tx >= '2023-02-01'), 
+        x = ~first_tx, 
+        y = ~last_tx,
+        size = ~ntx, 
+        type = "scatter", mode = "markers",
+        name = "Persistent Early Users") %>% 
+  add_trace(data = pu_summary %>% 
+              filter(first_tx >= '2023-01-01' & last_tx >= '2023-02-20'),
+        x = ~first_tx, 
+        y = ~last_tx,
+        size = ~ntx, 
+        type = "scatter", mode = "markers",
+        name = "New Active Users") %>%
+  add_trace(data = pu_summary, 
+            x = ~first_tx, y = ~first_tx, type = "scatter", mode = "lines", 
+            line = list(color = "black", dash = 'dash', width = 2), name = "Same-Day Line") %>%
+   layout(
+  xaxis = list(title = "First TX", showticklabels = TRUE),
+  yaxis = list(title = "Latest TX", showticklabels = TRUE),
+  title = list(text = "Two Key Groups among Axelar Users", y = 0.975)
+)
 
 ```
 
 # Power User on-chain histories
 
-# User Churn
+Looking at the two groups and checking for all their activity across the 5 chains using
+the Flipside Crypto `crosschain.core.address_tags` data.
 
-# EVM Market Fit / Opportunities
+```{r, warning = FALSE, message = FALSE}
+query <- {
+  "
+    SELECT * FROM crosschain.core.address_tags
+WHERE ADDRESS IN ('ADDRESSLIST') 
+AND TAG_CREATED_AT <= '2023-03-01'
+  "
+}
+
+# paste together the unique addresses to work within a SQL call. 
+alist <- paste0(tolower(unique(pu_summary$eoa)), collapse = "','")
+
+# swap parameters
+query <- gsub('ADDRESSLIST', replacement = alist, x = query)
+
+pu_history <- auto_paginate_query(query, api_key = readLines("api_key.txt"))  
 
 
+pu_summary <- pu_summary %>% 
+ mutate(
+   group = case_when(
+  first_tx < '2023-01-01' & last_tx >= '2023-02-01' ~ "Persistent Early User",
+  first_tx >= '2023-01-01' & last_tx >= '2023-02-20' ~ "New Active User", 
+  TRUE ~ "Other Short-Term User"
+)
+)
+
+# The # of tag_name is not really important, just whether it is >0 or = 0
+pu_actions <- pu_history %>% group_by(ADDRESS) %>% 
+  summarise(
+    n_nft_platforms = sum(TAG_NAME %in% c("opensea user", "looksrare user","x2y2 user", "rarible user")),
+    top_nft_trader = sum(TAG_NAME %in% c("nft transactor top 5%", "nft transactor top 10%")) > 0, 
+    top_balance = sum(TAG_NAME %in% c("eth top 1%", "wallet top 1%")) > 0,
+    n_cex = sum(TAG_TYPE == 'cex'),
+    n_active_chains = length(unique(BLOCKCHAIN))
+  )
+
+pu_actions <- merge(pu_actions, pu_summary[, c("eoa", "group")],
+                    by.x = "ADDRESS", by.y = "eoa", all.x = TRUE)
+
+```
+
+A key differentiator between early persistent users and new-active users is the increased prevelance 
+of trading NFTs on 1+ NFT platform. 
+
+```{r, warning = FALSE, message = FALSE}
+plot_ly(pu_actions) %>% 
+  add_trace(data = pu_actions,
+            x = ~n_nft_platforms,
+        color = ~group,
+        type = "histogram") %>% 
+  layout(
+    xaxis = list(title = "# ETH Mainnet NFT Platforms Used Ever"),
+    yaxis = list(title = "# of Unique GMP Users (any evm chain)"),
+    title = list(text = "Use of 1+ NFT Platforms small indication of GMP fit", y = 0.975)
+  )
+
+```
+
+A sizeable proportion of power users have tried out 4+ EVM chains, while a rare few seem 
+to have only used GMP from 1 of the 5 chains analyzed (e.g., only done ETH to Moonbeam).
+
+```{r, warning = FALSE, message = FALSE}
+plot_ly(pu_actions) %>% 
+  add_trace(data = pu_actions,
+            x = ~n_active_chains,
+        color = ~group,
+        type = "histogram") %>% 
+  layout(
+    title = list(text = "Use of at least 3 chains more indicative of GMP use", y = 0.975),
+    xaxis = list(title = "# EVM Chains Used Ever"),
+    yaxis = list(title = "# of Unique GMP Users (any evm chain)")
+  )
+```
+
+Experimentation with multiple ETH mainnet Central Exchange transfers may be a useful indicator of GMP 
+fitness.
+
+```{r, warning = FALSE, message = FALSE}
+plot_ly(pu_actions) %>% 
+  add_trace(data = pu_actions,
+            x = ~n_cex,
+        color = ~group,
+        type = "histogram") %>% 
+  layout(
+    title = list(text = "Use of 2+ ETH Mainnet CEX may be indicator of GMP fit", y = 0.975),
+    xaxis = list(title = "# ETH Mainnet Central Exchanges Used Ever"),
+    yaxis = list(title = "# of Unique GMP Users (any evm chain)")
+  )
+
+```
+
+# Conclusion: EVM Market Fit / Opportunities
+
+While Axelar GMP for EVM <-> EVM bridging still in its early days, there is a noticeable 
+difference between Persistent Early Users from 2022 and newer more active users. 
+
+Those most "sticky" to GMP (power users of 5+ GMP transactions across any combination of the 5 EVM chains 
+reviewed) seem to:
+
+- Experiment with NFTs (only a single Persistent Early User had tried even 1 NFT Platform: OpenSea, LooksRare, Rarible, or X2Y2).
+
+- Use explicitly 3-6 EVM chains (early persistent users are all 2,3, or 5 and may be disproportionately arbitrage bots). 
+
+- Used 2+ central exchange via ETH Mainnet, this may indicate users of GMP use their "main" KYC address as opposed to addresses they spin up that never touch a central exchange.
+
+Using this criteria, let's identify all EVM addresses that may be a target addressable market for Axelar GMP
+and see what chains they most often use. From there, alongside the provided network visualizations a plan for focusing 
+on particular EVM chains & users can be generated. 
+
+
+```{r, eval = FALSE}
+
+# This query is not evaluated for speed reasons but a download is available in repo.
+tam_query <- {
+  "
+SELECT ADDRESS, 
+    SUM(CASE WHEN TAG_NAME IN ('opensea user', 'looksrare user', 'x2y2 user', 'rarible user') THEN 1 ELSE 0 END) AS n_nft_platforms,
+    SUM(CASE WHEN TAG_TYPE = 'cex' THEN 1 ELSE 0 END) AS n_cex,
+    COUNT(DISTINCT BLOCKCHAIN) AS n_active_chains,
+    LISTAGG(DISTINCT BLOCKCHAIN, ',') WITHIN GROUP (ORDER BY BLOCKCHAIN) AS active_chains,
+MAX(
+    CASE 
+        WHEN tag_type = 'activity' 
+        THEN COALESCE(end_date, '2023-03-02') - 7
+        ELSE COALESCE(end_date, start_date)
+    END
+) AS latest_active_date
+FROM crosschain.core.address_tags
+WHERE TAG_CREATED_AT <= '2023-03-02' 
+GROUP BY ADDRESS
+HAVING n_active_chains >= 3 AND n_cex >= 1 AND n_nft_platforms >= 1;
+  "
+}
+
+tam_eoas <- auto_paginate_query(tam_query, api_key = readLines("api_key.txt"))
+
+```
+
+```{r, warning = FALSE, message = FALSE}
+# read result of query for speed purposes 
+tam_eoas <- read.csv("tam_eoas.csv", row.names = NULL, colClasses = 'character')
+tam_eoas$LATEST_ACTIVE_DATE <- as.Date(tam_eoas$LATEST_ACTIVE_DATE, tz = 'UTC')
+```
+
+Of the `r nrow(tam_eoas)` EVM Addresses that meet the following criteria:
+
+- Active on 3+ EVM chains *ever*
+- At least 1 transaction from or to a central exchange
+- At least 1 transaction on an NFT Marketplace 
+
+`r sum(tam_eoas$LATEST_ACTIVE_DATE >= as.Date("2023-01-01"))` were active in 2023.
+
+Of those active in 2023, the chain popularity order is ethereum (required to meet criteria), 
+polygon, bsc, optimism, arbitrum, avalanche.
+
+```{r, warning = FALSE, message = FALSE}
+active_eoas <- tam_eoas[tam_eoas$LATEST_ACTIVE_DATE >= as.Date("2023-01-01"), ]
+
+histories <- as.data.frame(table(unlist(strsplit(active_eoas$ACTIVE_CHAINS, split = ","))))
+histories <- histories[order(histories$Freq, decreasing = TRUE), ]
+
+colnames(histories) <- c("chain", "# Active TAM Users Ever")
+reactable(histories)
+
+```
+
+Looking at a correlation matrix of which chains co-occur with each other among target addresses:
+
+- Optimism & Arbitrum have significant co-occurrence 
+- Avalanche and Binance have an enclave separate from Polygon/Optimism.
+
+Because Axelar GMP does not currently support Optimism, interesting pairs of chains to focus on include: 
+
+- Avalanche <-> BSC 
+- Adding Optimism as an option for GMP and focusing on Arbitrum <-> Optimism.
+- Arbitrum <-> Avalanche <-> Polygon
+
+```{r, warning = FALSE, message = FALSE}
+for(i in histories$chain){
+active_eoas[i] <- as.numeric(grepl(i, active_eoas$ACTIVE_CHAINS))
+}
+
+corr <- round(cor(active_eoas[ , c("arbitrum", "avalanche", "bsc", "polygon", "optimism")]), 2)
+
+plot_ly(z = corr, type = "heatmap", x = colnames(corr), y = colnames(corr), 
+        colors = c("#d7191c", "#f7f7f7", "#2c7bb6"),
+        colorscale = list(c(0, "#d7191c"), c(0.12, "#f7f7f7"), c(1, "#2c7bb6"))) %>% 
+ colorbar(title = "Correlation", titleside = "top", 
+                        tickmode = "array", tickvals = c(-1, 0, 1), ticktext = c("-1", "0", "1"), 
+                        len = 0.5, thickness = 20, tickfont = list(size = 12), 
+                        xpad = 10, ypad = 10, ticks = "inside") %>% 
+  add_annotations(text = corr, x = rep(c(0,1,2,3,4), 5),
+                  y = c(rep(0,5), rep(1,5), rep(2,5), rep(3,5), rep(4,5)),
+                  showarrow = FALSE, font = list(color = "black", size = 20))
+  
+```
 
