@@ -77,6 +77,8 @@ reactable(
 )
 ```
 
+Note: All data cut-off as of March 1, 2023 for reproducibility.
+
 # Unique Users by source chain 
 
 Ethereum, with the highest transaction fees, has the largest avg # of USDC 
