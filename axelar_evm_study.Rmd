@@ -545,7 +545,9 @@ for(i in histories$chain){
 active_eoas[i] <- as.numeric(grepl(i, active_eoas$ACTIVE_CHAINS))
 }
 
-corr <- round(cor(active_eoas[ , c("arbitrum", "avalanche", "bsc", "polygon", "optimism")]), 2)
+binmatrix <- active_eoas[ , c("arbitrum", "avalanche", "bsc", "polygon", "optimism")]
+
+corr <- round(cor(binmatrix), 2)
 
 plot_ly(z = corr, type = "heatmap", x = colnames(corr), y = colnames(corr), 
         colors = c("#d7191c", "#f7f7f7", "#2c7bb6"),
@@ -560,3 +562,32 @@ plot_ly(z = corr, type = "heatmap", x = colnames(corr), y = colnames(corr),
   
 ```
 
+```{r}
+num_total <- nrow(binmatrix)
+
+cooccur_matrix <- matrix(0, nrow = ncol(binmatrix), ncol = ncol(binmatrix))
+for (i in 1:5) {
+  for (j in 1:5) {
+    if (i != j) {
+      cooccur_count <- sum(binmatrix[, i] == 1 & binmatrix[, j] == 1)
+      cooccur_matrix[i, j] <- cooccur_count
+    }
+  }
+}
+
+colnames(cooccur_matrix) <- colnames(binmatrix)
+rownames(cooccur_matrix) <- colnames(binmatrix)
+pct_cooccur_matrix <- round(cooccur_matrix / num_total, 2)
+
+plot_ly(z = pct_cooccur_matrix, type = "heatmap", x = colnames(pct_cooccur_matrix), y = colnames(pct_cooccur_matrix), 
+        colors = c("#d7191c", "#f7f7f7", "#2c7bb6"),
+        colorscale = list(c(0, "#d7191c"), c(0.12, "#f7f7f7"), c(1, "#2c7bb6"))) %>% 
+ colorbar(title = "% Co-Occurence", titleside = "top", 
+                        tickmode = "array", tickvals = c(-1, 0, 1), ticktext = c("-1", "0", "1"), 
+                        len = 0.5, thickness = 20, tickfont = list(size = 12), 
+                        xpad = 10, ypad = 10, ticks = "inside") %>% 
+  add_annotations(text = pct_cooccur_matrix, x = rep(c(0,1,2,3,4), 5),
+                  y = c(rep(0,5), rep(1,5), rep(2,5), rep(3,5), rep(4,5)),
+                  showarrow = FALSE, font = list(color = "black", size = 20))
+
+```
