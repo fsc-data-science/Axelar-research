@@ -13,7 +13,7 @@ For a deeper dive into the context,
 you can check out the report on our [research site](https://science.flipsidecrypto.xyz/research/) at [axelar_evm_tam](https://science.flipsidecrypto.xyz/axelar_evm_tam/).
 
 If you aren't interested in code and want the shortest summary of the situation, you can check out the
-email sized [axelar_evm_tam](https://flipsidecrypto.beehiiv.com) on our research beehiiv and subscribe to get (summaries of) the best crypto research direct to your inbox.
+email sized [axl-squid-evm-study](https://flipsidecrypto.beehiiv.com/p/axl-squid-evm-study) on our research beehiiv and subscribe to get (summaries of) the best crypto research direct to your inbox.
 
 # Reproduce Analysis
 
