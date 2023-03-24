@@ -1,0 +1,415 @@
+---
+title: "AxlScore Distributions"
+author: "Charliemarketplace"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    css: "styles.css"
+    includes:
+      in_header: header.html
+    code_folding: hide
+    toc: true
+    toc_float: true
+editor_options: 
+  chunk_output_type: console
+---
+
+# AxlScore Distributions
+
+Before implementing a scoring methodology for Axlscore, this piece looks at historical 
+Satellite and Squid transfers at the sender-source-destination-method level to 
+assess current distributions of key stats at the sender level.
+
+Note: In reality different senders from different source chains can be the same person. For the formal Axlscore app the user will link cross-chain sender addresses to get credit for multiple sender addresses.
+
+Final scoring will take into account how these distributions would be collapsed by attributing multiple
+senders to the same individual.
+
+```{r, warning=FALSE, message=FALSE}
+
+# library(shroomDK)
+library(reactable)
+library(plotly)
+library(dplyr)
+
+# Analysis is timestamped to prior to 2023-03-24 UTC
+# https://flipsidecrypto.xyz/edit/queries/5278823a-aa1e-4677-910d-51a49cb7cda0
+
+# NOT RUN 
+axlscore_query <- {
+  "
+  
+-- SELECT TOKENS ONLY!
+with satellite_token_address_coingecko_id AS (
+  SELECT COLUMN1 as TOKEN_ADDRESS, COLUMN2 as ID FROM (
+VALUES ('uatom','cosmos'),('avalanche-uusdc','usd-coin'),('wavax-wei','avalanche-2'),
+('uaxl','axelar'),('0x6e4e624106cb12e168e6533f8ec7c82263358940','axelar'),
+('0x467719ad09025fcc6cf6f8311755809d45a5e5f3','axelar'),('0x44c784266cf024a60e8acf2427b9857ace194c5d','axelar'),
+('0x8b1f4432f943c465a973fedc6d7aa50fc96f1f65','axelar'),('0x1b7c03bc2c25b8b5989f4bc2872cf9342cec80ae','axelar'),
+('0x23ee2343b892b1bb63503a4fabc840e0e2c6810f','axelar'),('0x80d18b1c9ab0c9b5d6a6d5173575417457d00a12','cosmos'),
+('0x33f8a5029264bcfb66e39157af3fea3e2a8a5067','cosmos'),('0x27292cf0016e5df1d8b37306b2a98588acbd6fca','cosmos'),
+('0xddc9e2891fa11a4cc5c223145e8d14b44f3077c9','dai'),('0xc5fa5669e326da8b2c35540257cd48811f40a36b','dai'),
+('0x4914886dbb8aad7a7456d471eaab10b06d42348d','frax'),('0x53adc464b488be8c5d7269b9abbce8ba74195c3a','frax'),
+('0x750e4c4984a9e0f12978ea6742bc1c5d248f40ed','axlusdc'),('0xfab550568c688d5d8a52c7d794cb93edc26ec0ec','axlusdc'),
+('0x4268b8f0b87b6eae5d897996e6b845ddbd99adf3','usd-coin'),('0xeb466342c4d449bc9f53a865d5cb90586f405215','usd-coin'),
+('0xceed2671d8634e3ee65000edbbee66139b132fbf','tether'),('0xf976ba91b6bb3468c91e4f02e68b37bc64a57e66','tether'),
+('0x7f5373ae26c3e8ffc4c77b7255df7ec1a9af52a6','tether'),('wbnb-wei','binancecoin'),('0x4fabb145d64652a948d72533023f6e7a623c7c53','binance-usd'),
+('busd-wei','binance-usd'),('dai-wei','dai'),('0x6b175474e89094c44da98b954eedeac495271d0f','dai'),('dot-planck','polkadot'),
+('weth-wei','ethereum'),('frax-wei','frax'),('0x853d955acef822db058eb8505911ed77f175b99e','frax'),('wftm-wei','fantom'),
+('link-wei','chainlink'),('0x514910771af9ca656af840dff83e8264ecf986ca','chainlink'),('wmatic-wei','wmatic'),('mkr-wei','maker'),
+('polygon-uusdc','usd-coin'),('uusdc','usd-coin'),('0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48','usd-coin'),
+('0x2791bca1f2de4661ed88a30c99a7a9449aa84174','usd-coin'),('0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e','usd-coin'),('uusdt','tether'),
+('0xdac17f958d2ee523a2206206994597c13d831ec7','tether'),('0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7','avalanche-2'),
+('0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c','binancecoin'),('wbtc-satoshi','bitcoin'),('0x2260fac5e5542a773aa44fbcfedf7c193bc2c599','bitcoin'),
+('0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2','ethereum'),('0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270','wmatic'))
+),  
+
+squid_hr_sender_og_dest_amount AS (
+SELECT 'squid' as method, DATE_TRUNC('hour', BLOCK_TIMESTAMP) as hr, tx_hash, sender, 
+token_address, token_symbol, amount, source_chain, destination_chain
+FROM axelar.core.ez_squid
+WHERE BLOCK_TIMESTAMP < '2023-03-24'
+), 
+
+satellite_hr_sender_og_dest_amount AS (
+SELECT 'satellite' as method, DATE_TRUNC('hour', BLOCK_TIMESTAMP) as hr, tx_hash, sender, 
+token_address, token_symbol, amount, source_chain, destination_chain
+FROM axelar.core.ez_satellite
+WHERE BLOCK_TIMESTAMP < '2023-03-24'
+), 
+
+all_sends AS 
+(
+SELECT * FROM squid_hr_sender_og_dest_amount 
+UNION (SELECT * FROM satellite_hr_sender_og_dest_amount)
+),
+
+all_sends_labeled_id AS (
+SELECT * FROM all_sends 
+  INNER JOIN satellite_token_address_coingecko_id USING (TOKEN_ADDRESS)
+),
+
+-- Infill missing hour prices with most recent non-missing hour price
+all_sends_priced AS (
+SELECT *, 
+coalesce(price, lag(price) IGNORE NULLS over (partition by ID order by HR)) as imputed_price
+FROM all_sends_labeled_id
+ LEFT JOIN (
+    SELECT ID, DATE_TRUNC('hour', RECORDED_HOUR) as hr, 
+    close as price
+      FROM crosschain.core.fact_hourly_prices
+    WHERE provider = 'coingecko'
+  ) 
+USING(ID,hr)
+),
+
+-- For transactions BEFORE fact_hourly_token_price has a price
+-- Use the FIRST price ever recorded in fact_hourly_token_price
+-- Otherwise, use actual hourly OR imputed (most recent) hourly price
+-- Close -> price -> imputed_price -> final_price
+all_sends_priced_final AS (
+SELECT *, 
+coalesce(imputed_price,
+    FIRST_VALUE(imputed_price IGNORE NULLS) OVER (PARTITION BY ID ORDER BY HR)) AS final_price
+FROM all_sends_priced
+)
+
+-- gotta send at least $1 between chains
+SELECT SENDER, source_chain, destination_chain, method,
+ count(*) as n_transfers, 
+ sum(amount*final_price) as total_usd
+FROM all_sends_priced_final
+GROUP BY SENDER, source_chain, destination_chain, method
+HAVING total_usd >= 1
+  "
+}
+
+# NOT RUN 
+# axlscore <- shroomDK::auto_paginate_query(axlscore_query, api_key = readLines("api_key.txt"))
+
+```
+
+# Data Prep
+
+Creating a sender level table: 
+
+```{r, warning=FALSE, message=FALSE}
+
+axlscore <- read.csv("axlscore-selecttoken-sender-method-amounts.csv", row.names = NULL)
+# fix avalanch -> avalanche
+axlscore$SOURCE_CHAIN <- gsub(pattern = "$avalanch", 
+                              replacement = "avalanche", 
+                              x = axlscore$SOURCE_CHAIN)
+axlscore$DESTINATION_CHAIN <- gsub(pattern = "$avalanch",
+                                   replacement = "avalanche", 
+                                   x = axlscore$DESTINATION_CHAIN)
+
+evm <- c("ethereum","avalanche","polygon","binance","arbitrum")
+
+# give cross_vm credit for nonevm -> evm OR evm -> nonevm 
+axlscore <- axlscore %>% 
+  mutate(
+    cross_vm = ifelse(
+      (SOURCE_CHAIN %in% evm & !(DESTINATION_CHAIN %in% evm)) |
+      (!(SOURCE_CHAIN %in% evm) & DESTINATION_CHAIN %in% evm),
+      1, 0
+      ) 
+  )
+
+# Sender Summary:
+#' Satellite total $USD 
+#' Satellite total # Transfers 
+#' Squid total $USD
+#' Squid total # Transfers
+#' Has done both squid & satellite (binary)
+#' # of cross_vm transfers
+#' $ of cross_vm transfers
+
+
+sender_stats <- axlscore %>% group_by(SENDER) %>% 
+  summarise(
+    sat_usd = sum(TOTAL_USD[METHOD == "satellite"]),
+    sat_transfers = sum(N_TRANSFERS[METHOD == "satellite"]),
+    squid_usd = sum(TOTAL_USD[METHOD == "squid"]),
+    squid_transfers = sum(N_TRANSFERS[METHOD == "squid"]),
+    unique_methods = length(unique(METHOD)),
+    crossvm_transfers = sum(N_TRANSFERS * cross_vm),
+    crossvm_usd = sum(TOTAL_USD * cross_vm)
+  )
+
+reactable(head(sender_stats), 
+          columns = list(
+    SENDER = colDef(width = 80)),
+    resizable = TRUE)
+
+```
+
+# Distributions 
+
+## Total Satellite USD Value Transferred 
+
+There are `r format(sum(sender_stats$sat_usd > 0), big.mark=",")` sender addresses 
+that have transferred at least $1 of value via Satellite.
+
+Among those that *have* transferred at least $1 via Satellite: 
+
+```{r}
+getsum <- function(stat){
+  x = summary(stat)
+  
+  reactable(
+    data.frame(
+      stat = names(x),
+      val = format(round(as.numeric(x),2), big.mark = ",")
+    ),
+    defaultColDef = colDef(width = 150, align ="right")
+  )
+}
+
+get_distr <- function(df, x, 
+                      binwidth = 30, 
+                      color = "steelblue", 
+                      title = "", 
+                      xlab = "", 
+                      ylab = "",
+                      min_value = 0,
+                      max_value = Inf) {
+  
+  df <- df %>% filter(get(x) <= max_value & get(x) >= min_value)
+  bw <- binwidth
+  bw_min <- min(df[[x]])
+  bw_max <- max(df[[x]])
+  breaks <- seq(bw_min, bw_max, bw)
+  
+  plot_ly(df, x = ~get(x), 
+          type = "histogram",
+          autobinx = FALSE,
+                xbins = list(start = bw_min, end = bw_max, size = bw, 
+                            autobin = FALSE, breaks = breaks),
+               marker = list(color = color)) %>%
+    layout(title = list(text = title), 
+           xaxis = list(title = xlab), 
+           yaxis = list(title = ylab),
+           margin = list(l = 50, r = 50, t = 50, b = 50),
+           showlegend = FALSE)
+  
+}
+
+getsum(sender_stats$sat_usd[sender_stats$sat_usd > 0])
+
+get_distr(sender_stats, 
+          "sat_usd",
+          binwidth = 100,
+          color = "#3b82f680", 
+          title = "Median Total Satellite usage is $311\n (Zooming in to <$20k)",
+          xlab = "$USD Bucket", 
+          ylab = "# of Senders", 
+          min_value = 1,
+          max_value = 20000)
+
+```
+
+## Total Satellite # Transfers
+
+There are `r format(sum(sender_stats$sat_transfers > 0), big.mark=",")` sender addresses 
+that have transferred at least once via Satellite.
+
+Among those that have transferred at least once via Satellite: 
+
+```{r}
+
+getsum(sender_stats$sat_transfers[sender_stats$sat_transfers > 0])
+
+get_distr(sender_stats, 
+          "sat_transfers",
+          binwidth = 1,
+          color = "#3b82f680", 
+          title = "Median # Satellite Transfers is 1\n (Zooming in to <50)",
+          xlab = "# Transfers", 
+          ylab = "# of Senders", 
+          min_value = 1,
+          max_value = 50)
+```
+
+This may be worth further investigation as only `r format(sum(sender_stats$sat_transfers > 1), big.mark=",")` senders have done 2+ transfers, implying only a 
+`r round(100*sum(sender_stats$sat_transfers > 1)/sum(sender_stats$sat_transfers > 0),2)`% return rate (at the address level, recall 1 individual may have multiple sender addresses).
+
+## Total Squid USD Value Transferred 
+
+
+There are `r format(sum(sender_stats$squid_transfers > 0), big.mark=",")` sender addresses 
+that have transferred at least once via Squid.
+
+Among those that have transferred at least $1 via Squid: 
+
+```{r}
+getsum(sender_stats$squid_usd[sender_stats$squid_usd > 0])
+
+get_distr(sender_stats, 
+          "squid_usd",
+          binwidth = 100,
+          color = "#3b82f680", 
+          title = "Median Total Squid usage is $20\n (Zooming in to <$5K)",
+          xlab = "$USD Bucket", 
+          ylab = "# of Senders", 
+          min_value = 1,
+          max_value = 5000)
+
+```
+
+
+## Total Squid # Transfers
+
+There are `r format(sum(sender_stats$squid_transfers > 0), big.mark=",")` sender addresses 
+that have transferred at least once via Squid.
+
+Among those that have transferred at least once via Squid: 
+
+```{r}
+getsum(sender_stats$squid_transfers[sender_stats$squid_transfers > 0])
+
+get_distr(sender_stats, 
+          "squid_transfers",
+          binwidth = 1,
+          color = "#3b82f680", 
+          title = "Median # Squid Transfers is 1\n (Zooming in to <50)",
+          xlab = "# Transfers", 
+          ylab = "# of Senders", 
+          min_value = 1,
+          max_value = 50)
+```
+
+This aligns to the previous [Axelar EVM Study](https://science.flipsidecrypto.xyz/axelar_evm_tam/) on Squid transfers. As only
+`r round(100*sum(sender_stats$squid_transfers > 1)/sum(sender_stats$squid_transfers > 0),2)`%
+of addresses returned to do 2+ transfers.
+
+## USD Value by usage of one vs both methods 
+
+Of the `r format(length(unique(sender_stats$SENDER)), big.mark = ',')` unique senders
+not all are compatible with using both Satellite and Squid (Squid is not on Osmosis for 
+example). 
+
+When cross-chain identification in the final Axlscore product is available (i.e., 
+when users bring their list of cross-chain addresses) we can better understand 
+how usage between the two coincide. 
+
+For now, we'll look at the `r format(sum(sender_stats$squid_transfers > 0), big.mark = ',')` Squid users and how key stats compare breaking apart the `r sum(sender_stats$squid_transfers > 0 & sender_stats$sat_transfers > 0)` that have used *both*.
+
+```{r}
+squids <- sender_stats %>% filter(squid_transfers > 0)
+
+summaries <- squids %>% group_by(unique_methods) %>% 
+  summarize(
+    num_senders = n(),
+    total_usd = sum(sat_usd + squid_usd),
+    avg_usd = round(mean(sat_usd + squid_usd),0),
+    median_usd = round(median(sat_usd + squid_usd),0),
+    total_transfers = sum(sat_transfers + squid_transfers),
+    avg_transfers = mean(sat_transfers + squid_transfers),
+    median_transfers = median(sat_transfers + squid_transfers)
+  ) %>% round(., 2) 
+
+summaries$total_usd <- format(summaries$total_usd, big.mark = ",")
+summaries$num_senders <- format(summaries$num_senders, big.mark = ",")
+summaries$avg_usd <- format(summaries$avg_usd, big.mark = ",")
+summaries$total_transfers <- format(summaries$total_transfers, big.mark = ",")
+
+summaries <- t(summaries)
+colnames(summaries) <- c("Squid Only Users", "Squid+Satellite Users")
+
+  reactable(
+   summaries,
+    defaultColDef = colDef(width = 200, align ="right")
+  )
+
+
+```
+
+## Cross Virtual Machine USD Value Transferred
+
+While Squid transfers are exclusively within the Ethereum VM. Satellite transfers 
+can be any combination including unrelated to EVM.
+
+There are `r format(sum(sender_stats$crossvm_transfers > 0), big.mark = ',')` senders 
+who initiated at least 1 crossvm transfer.
+
+Among those that have transferred at least $1 across virtual machines (i.e., 
+into EVM from outside or from EVM to outside): 
+
+```{r}
+
+getsum(sender_stats$crossvm_usd[sender_stats$crossvm_usd > 0])
+
+get_distr(sender_stats, 
+          "crossvm_usd",
+          binwidth = 100,
+          color = "#3b82f680", 
+          title = "Median Total CrossVM USD Transferred in $367\n (Zooming in to <5000)",
+          xlab = "$USD Bucket", 
+          ylab = "# of Senders", 
+          min_value = 1,
+          max_value = 5000)
+```
+
+## Cross Virtual Machine Transfers
+
+Among those that have transferred at least once across virtual machines (i.e., 
+into EVM from outside or from EVM to outside): 
+
+```{r}
+getsum(sender_stats$crossvm_transfers[sender_stats$crossvm_transfers > 0])
+
+get_distr(sender_stats, 
+          "crossvm_transfers",
+          binwidth = 1,
+          color = "#3b82f680", 
+          title = "Median # of CrossVM Transfers 1\n (Zooming in to <50)",
+          xlab = "# Transfers", 
+          ylab = "# of Senders", 
+          min_value = 1,
+          max_value = 50)
+
+```
+
+This may be worth further investigation as only `r format(sum(sender_stats$crossvm_transfers > 1), big.mark=",")` senders have done 2+ transfers, implying only a 
+`r round(100*sum(sender_stats$crossvm_transfers > 1)/sum(sender_stats$crossvm_transfers > 0),2)`% return rate (at the address level, recall 1 individual may have multiple sender addresses).
