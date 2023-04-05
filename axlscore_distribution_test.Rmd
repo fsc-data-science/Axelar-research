@@ -1,5 +1,5 @@
 ---
-title: "AxlScore Distributions"
+title: "AxelScore Distributions"
 author: "Charliemarketplace"
 date: "`r Sys.Date()`"
 output:
@@ -14,13 +14,13 @@ editor_options:
   chunk_output_type: console
 ---
 
-# AxlScore Distributions
+# AxelScore Distributions
 
-Before implementing a scoring methodology for Axlscore, this piece looks at historical 
+Before implementing a scoring methodology for Axelscore, this piece looks at historical 
 Satellite and Squid transfers at the sender-source-destination-method level to 
 assess current distributions of key stats at the sender level.
 
-Note: In reality different senders from different source chains can be the same person. For the formal Axlscore app the user will link cross-chain sender addresses to get credit for multiple sender addresses.
+Note: In reality different senders from different source chains can be the same person. For the formal Axelscore app the user will link cross-chain sender addresses to get credit for multiple sender addresses.
 
 Final scoring will take into account how these distributions would be collapsed by attributing multiple
 senders to the same individual.
@@ -36,7 +36,7 @@ library(dplyr)
 # https://flipsidecrypto.xyz/edit/queries/5278823a-aa1e-4677-910d-51a49cb7cda0
 
 # NOT RUN 
-axlscore_query <- {
+axelscore_query <- {
   "
   
 -- SELECT TOKENS ONLY!
@@ -125,7 +125,7 @@ HAVING total_usd >= 1
 }
 
 # NOT RUN 
-# axlscore <- shroomDK::auto_paginate_query(axlscore_query, api_key = readLines("api_key.txt"))
+# axelscore <- shroomDK::auto_paginate_query(axelscore_query, api_key = readLines("api_key.txt"))
 
 ```
 
@@ -135,19 +135,19 @@ Creating a sender level table:
 
 ```{r, warning=FALSE, message=FALSE}
 
-axlscore <- read.csv("axlscore-selecttoken-sender-method-amounts.csv", row.names = NULL)
+axelscore <- read.csv("axlscore-selecttoken-sender-method-amounts.csv", row.names = NULL)
 # fix avalanch -> avalanche
-axlscore$SOURCE_CHAIN <- gsub(pattern = "$avalanch", 
+axelscore$SOURCE_CHAIN <- gsub(pattern = "$avalanch", 
                               replacement = "avalanche", 
-                              x = axlscore$SOURCE_CHAIN)
-axlscore$DESTINATION_CHAIN <- gsub(pattern = "$avalanch",
+                              x = axelscore$SOURCE_CHAIN)
+axelscore$DESTINATION_CHAIN <- gsub(pattern = "$avalanch",
                                    replacement = "avalanche", 
-                                   x = axlscore$DESTINATION_CHAIN)
+                                   x = axelscore$DESTINATION_CHAIN)
 
 evm <- c("ethereum","avalanche","polygon","binance","arbitrum")
 
 # give cross_vm credit for nonevm -> evm OR evm -> nonevm 
-axlscore <- axlscore %>% 
+axelscore <- axelscore %>% 
   mutate(
     cross_vm = ifelse(
       (SOURCE_CHAIN %in% evm & !(DESTINATION_CHAIN %in% evm)) |
@@ -166,7 +166,7 @@ axlscore <- axlscore %>%
 #' $ of cross_vm transfers
 
 
-sender_stats <- axlscore %>% group_by(SENDER) %>% 
+sender_stats <- axelscore %>% group_by(SENDER) %>% 
   summarise(
     sat_usd = sum(TOTAL_USD[METHOD == "satellite"]),
     sat_transfers = sum(N_TRANSFERS[METHOD == "satellite"]),
@@ -329,7 +329,7 @@ Of the `r format(length(unique(sender_stats$SENDER)), big.mark = ',')` unique se
 not all are compatible with using both Satellite and Squid (Squid is not on Osmosis for 
 example). 
 
-When cross-chain identification in the final Axlscore product is available (i.e., 
+When cross-chain identification in the final Axelscore product is available (i.e., 
 when users bring their list of cross-chain addresses) we can better understand 
 how usage between the two coincide. 
 
