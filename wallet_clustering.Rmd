@@ -1,0 +1,198 @@
+---
+title: "Wallet-Clustering"
+author: "Charliemarketplace"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    css: "styles.css"
+    includes:
+      in_header: header.html
+    code_folding: hide
+    toc: true
+    toc_float: true
+editor_options: 
+  chunk_output_type: console
+---
+
+# Intro 
+
+Squid Router and Axelar Satellite enable cross-chain communications and transfers of assets (e.g., axlUSDC).
+The goal of this piece is to look at the unique Sender-Receiver pairs and cluster them into associated addresses, e.g., 
+addresses owned by the same individual or entity across multiple chains, by assuming that a transfer between the addresses
+indicates an association.
+
+For a trivialized example, consider the mock table below, and the 2 cluster groups that result:
+
+```{r, warning=FALSE, message= FALSE}
+library(shroomDK)
+library(igraph)
+library(reactable)
+library(dplyr)
+library(plotly)
+
+number_format <- function(n){
+  format(n, big.mark = ",")
+}
+
+# Create the dataset
+x <- data.frame(
+  sender = c(
+    "alice", "alice", "bob", "henry", "henry", "joe"
+  ),
+  receiver = c(
+    "bob", "carl", "david", "alex", "joe", "alex"
+  )
+)
+
+reactable(x)
+
+# Create a graph object from the sender-receiver pairs
+g <- graph_from_data_frame(x, directed = FALSE)
+
+# Find connected components
+components <- components(g)
+
+group_df <- data.frame(id = integer(0), members = character(0))
+
+# Add the groups to the data frame
+for (i in 1:max(components$membership)) {
+  group <- V(g)[components$membership == i]
+  group_df <- rbind(group_df, data.frame(id = i, members = toString(group$name)))
+}
+
+# Print the resulting data frame
+reactable(group_df)
+
+```
+
+## Axelar Clusters as of 2023-04-20
+
+Timestamping the available data to transfers on or before 2023-04-20 UTC time.
+
+```{r, warning=FALSE, message= FALSE}
+
+# sender, source, destination, reciever 
+query <- {
+"
+with ssdr AS (
+SELECT DISTINCT * FROM ( 
+SELECT DISTINCT SENDER, SOURCE_CHAIN, DESTINATION_CHAIN, RECEIVER 
+FROM axelar.core.ez_squid 
+WHERE BLOCK_TIMESTAMP < '2023-04-21'
+UNION ALL 
+SELECT DISTINCT SENDER, SOURCE_CHAIN, DESTINATION_CHAIN, RECEIVER 
+FROM axelar.core.ez_satellite 
+WHERE BLOCK_TIMESTAMP < '2023-04-21'
+)
+),
+
+sender_labeled AS (
+SELECT SENDER,
+ COALESCE(LABEL_TYPE,'') as stype, 
+ COALESCE(ADDRESS_NAME,'') as sname,
+ SOURCE_CHAIN, DESTINATION_CHAIN, RECEIVER
+ from ssdr LEFT JOIN crosschain.core.address_labels adl ON 
+  LOWER(ssdr.SENDER) = LOWER(adl.ADDRESS) AND 
+  lower(ssdr.source_chain) = lower(adl.blockchain )
+),
+
+receiver_labeled AS (
+SELECT SENDER, stype, sname, SOURCE_CHAIN, DESTINATION_CHAIN, 
+ RECEIVER,
+ COALESCE(LABEL_TYPE,'') as rtype,
+ COALESCE(ADDRESS_NAME,'') as rname
+ from sender_labeled LEFT JOIN crosschain.core.address_labels adl ON 
+  LOWER(sender_labeled.RECEIVER) = LOWER(adl.ADDRESS) AND 
+  lower(sender_labeled.destination_chain) = lower(adl.blockchain)
+)
+
+SELECT * FROM receiver_labeled
+  "
+}
+
+unique_SSDR <- shroomDK::auto_paginate_query(query = query, api_key = readLines("api_key.txt"))
+unique_SSDR$SENDER <- tolower(unique_SSDR$SENDER)
+unique_SSDR$RECEIVER <- tolower(unique_SSDR$RECEIVER)
+
+```
+
+```{r}
+# Remove interesting bot that does 800+ sends to numerous addresses 
+SR <- unique(
+  unique_SSDR %>% filter(
+  SNAME == "" & RNAME == "" & 
+    SENDER != '0xdba800f4da03dba3f604268aec2ad9eb28a055a4'
+) %>% select(SENDER, RECEIVER)
+)
+
+SR_sends <- SR %>% group_by(SENDER) %>% summarise(
+  num_sends = n()
+) 
+
+SR_receives <- SR %>% group_by(RECEIVER) %>% summarise(
+  num_receives = n()
+)
+
+
+```
+
+There are `r number_format(nrow(unique_SSDR))` unique combinations of: Sender-Source-Destination-Receiver addresses.
+
+Ignoring the chains, and removing pairs where sender or receiver is a known router, central exchange, 
+or similar (i.e., we don't want to associate all users of the axelar relayer address into 1 cluster of 1,000s of members) there are `r number_format(nrow(SR))` unique relevant Sender-Receiver pairs.
+
+## Assessing clusters 
+
+Similarly, grouping the Axelar data (previewed here) focusing on only Sender/Receiver: 
+
+```{r}
+
+reactable(head(SR))
+
+# Create a graph object from the sender-receiver pairs
+axlgraph <- graph_from_data_frame(SR, directed = FALSE)
+
+# Find connected components
+components <- components(axlgraph)
+
+```
+
+There are `r number_format(components$no)` clusters identified.
+```{r}
+
+axl_groups <- unique (
+  data.frame(
+  address = names(components$membership),
+  group_id = as.numeric(components$membership)
+)
+)
+
+axl_groups <- merge(axl_groups, SR_sends, by.x = 'address', by.y = "SENDER", all.x = TRUE, sort = FALSE)
+axl_groups <- merge(axl_groups, SR_receives, by.x = 'address', by.y = "RECEIVER", all.x = TRUE, sort = FALSE)
+
+
+
+group_count <- axl_groups %>% group_by(group_id) %>% summarise(
+  n_members = n()
+)
+
+counts <- c(0,sort(unique(group_count$n_members)))
+cdf_members <- ecdf(group_count$n_members)(counts)
+plot_ly(data = data.frame(), x = ~counts, y = ~cdf_members, type = 'scatter', mode = 'lines+markers') %>% 
+  layout(xaxis = list(title = "Number of Addresses in Cluster"),
+         yaxis = list(title = "Cumulative % of Addresses"),
+         title = list(
+           text = "~99% of Clusters have 6 or fewer addresses", 
+           y = 0.95)
+  )
+
+multi_member_groups <- group_count %>% filter(n_members > 1)
+
+```
+
+# Save Axl-Groups for Understanding Axelscore Distribution 
+
+```{r}
+write.csv(axl_groups, "axelgroups.csv", row.names = FALSE)
+
+```
